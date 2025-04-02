@@ -7,9 +7,7 @@ Author: 5StarPlugins.com / Press Wizards.com
 Author URI: https://presswizards.com/
 */
 
-if (!defined('ABSPATH')) {
-    exit;
-}
+if (!defined('ABSPATH')) exit;
 
 add_action('admin_menu', function () {
     add_submenu_page(
@@ -18,15 +16,62 @@ add_action('admin_menu', function () {
         'Add Plugin from URL',  // Menu title
         'install_plugins',  // Capability needed
         'add-plugin-from-url',  // Menu slug
-        'render_add_plugin_from_url_page'  // Callback to render the page
+        'apfu_render_add_plugin_from_url_page'  // Callback to render the page
     );
 });
 
-function render_add_plugin_from_url_page()
+function apfu_fetch_plugin_dropdown_options() {
+    $transient_key = 'apfu_dropdown_options';
+    $remote_url = 'https://raw.githubusercontent.com/presswizards/add-plugin-from-url/refs/heads/main/built-in-plugins.csv';
+
+    // Check if the transient exists
+    $cached_data = get_transient($transient_key);
+    if ($cached_data !== false) {
+        return $cached_data;
+    }
+
+    // Fetch the remote file
+    $response = wp_remote_get($remote_url, ['timeout' => 30]);
+
+    if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+        return []; // Return an empty array if the request fails
+    }
+
+    $csv_data = wp_remote_retrieve_body($response);
+    $lines = explode("\n", $csv_data);
+    $options = [];
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if (!empty($line)) {
+            list($name, $url) = array_map('trim', explode(',', $line, 2));
+            if (filter_var($url, FILTER_VALIDATE_URL)) {
+                $options[] = ['name' => $name, 'url' => $url];
+            }
+        }
+    }
+
+    // Cache the data in a transient for 6 hours
+    set_transient($transient_key, $options, 6 * HOUR_IN_SECONDS);
+
+    // Save the data in the plugin options table as a fallback
+    update_option('apfu_plugin_dropdown_options', $options);
+
+    return $options;
+}
+
+function apfu_render_add_plugin_from_url_page()
 {
     // Ensure only admins or users with install_plugins capability can access
     if (!current_user_can('install_plugins')) {
         wp_die(__('You do not have sufficient permissions to install plugins.'));
+    }
+
+    // Handle resync action
+    if (!empty($_POST['apfu_resync_plugins'])) {
+        delete_transient('apfu_dropdown_options'); // Clear the transient
+        apfu_fetch_plugin_dropdown_options(); // Fetch and cache the latest options
+        echo '<div class="updated"><p>Plugin list resynced successfully.</p></div>';
     }
 
     if (!empty($_POST['plugin_url'])) {
@@ -78,7 +123,7 @@ function render_add_plugin_from_url_page()
                 // Check if the plugin already exists
                 if (is_dir($plugin_path)) {
                     // Plugin exists, delete it first to force reinstallation
-                    if (delete_plugin_folder($plugin_path)) {
+                    if (apfu_delete_plugin_folder($plugin_path)) {
                     } else {
                         echo '<div class="error"><p>Failed to delete existing plugin folder.</p></div>';
                     }
@@ -99,6 +144,9 @@ function render_add_plugin_from_url_page()
         }
     }
 
+    // Fetch dropdown options
+    $dropdown_options = apfu_fetch_plugin_dropdown_options();
+
     // Display the form
     ?>
     <div class="wrap">
@@ -109,22 +157,30 @@ function render_add_plugin_from_url_page()
             <input type="submit" class="button button-primary" value="Install Now">
         </form>
 
-    <h2>Install Frequently Used Plugin</h2>
-    <form method="post">
-        <label for="plugin_select">Select a Plugin:</label>
-        <select name="plugin_url" id="plugin_select" class="regular-text">
-            <option value="">Select a plugin...</option>
-            <option value="https://github.com/presswizards/cloudflare-waf-rules-wizard/releases/download/InstallRelease/cloudflare-waf-rules-wizard.zip">Cloudflare WAF Rules Wizard</option>
-            <option value="https://envato.github.io/wp-envato-market/dist/envato-market.zip">Envato Market</option>
-        </select>
-        <input type="submit" class="button button-primary" value="Add Plugin">
-    </form>
+        <h2>Install Frequently Used Plugin</h2>
+        <form method="post">
+            <label for="plugin_select">Select a Plugin:</label>
+            <select name="plugin_url" id="plugin_select" class="regular-text">
+                <option value="">Select a plugin...</option>
+                <?php foreach ($dropdown_options as $option): ?>
+                    <option value="<?php echo esc_url($option['url']); ?>">
+                        <?php echo esc_html($option['name']); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <input type="submit" class="button button-primary" value="Add Plugin">
+        </form>
 
+        <h2>Resync Plugin List</h2>
+        <form method="post">
+            <input type="hidden" name="apfu_resync_plugins" value="1">
+            <input type="submit" class="button button-secondary" value="Resync Now">
+        </form>
     </div>
     <?php
 }
 
-function delete_plugin_folder($plugin_path) {
+function apfu_delete_plugin_folder($plugin_path) {
     if (is_dir($plugin_path)) {
         // Open the directory and loop through its contents
         $files = array_diff(scandir($plugin_path), array('.', '..'));
@@ -133,7 +189,7 @@ function delete_plugin_folder($plugin_path) {
             $file_path = $plugin_path . '/' . $file;
             if (is_dir($file_path)) {
                 // Recursively delete subdirectories
-                delete_plugin_folder($file_path);
+                apfu_delete_plugin_folder($file_path);
             } else {
                 // Delete files
                 unlink($file_path);
@@ -148,8 +204,8 @@ function delete_plugin_folder($plugin_path) {
 }
 
 // Displaying the admin notice on plugins.php
-add_action('admin_notices', 'display_plugin_install_success_notice');
-function display_plugin_install_success_notice() {
+add_action('admin_notices', 'apfu_display_plugin_install_success_notice');
+function apfu_display_plugin_install_success_notice() {
     // Check if the transient is set
     if ($message = get_transient('plugin_install_success_notice')) {
         echo '<div class="updated notice is-dismissible"><p>' . esc_html($message) . '</p></div>';
