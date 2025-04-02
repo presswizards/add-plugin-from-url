@@ -60,6 +60,66 @@ function apfu_fetch_plugin_dropdown_options() {
     return $options;
 }
 
+function apfu_fetch_custom_plugin_lists() {
+    $custom_lists = get_option('apfu_custom_plugin_lists', []);
+    return is_array($custom_lists) ? $custom_lists : [];
+}
+
+function apfu_save_custom_plugin_list($title, $csv_url) {
+    $custom_lists = apfu_fetch_custom_plugin_lists();
+    $custom_lists[] = ['title' => sanitize_text_field($title), 'csv_url' => esc_url_raw($csv_url)];
+    update_option('apfu_custom_plugin_lists', $custom_lists);
+}
+
+function apfu_fetch_plugins_from_csv($csv_url, $index = null) {
+    $transient_key = $index !== null ? 'apfu_custom_list_' . $index : 'apfu_dropdown_options';
+
+    // Check if the transient exists
+    $cached_data = get_transient($transient_key);
+    if ($cached_data !== false) {
+        return $cached_data;
+    }
+
+    // Fetch the remote file
+    $response = wp_remote_get($csv_url, ['timeout' => 30]);
+
+    if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+        return []; // Return an empty array if the request fails
+    }
+
+    $csv_data = wp_remote_retrieve_body($response);
+    $lines = explode("\n", $csv_data);
+    $options = [];
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if (!empty($line)) {
+            list($name, $url) = array_map('trim', explode(',', $line, 2));
+            if (filter_var($url, FILTER_VALIDATE_URL)) {
+                $options[] = ['name' => $name, 'url' => $url];
+            }
+        }
+    }
+
+    // Cache the data in a transient for 6 hours
+    set_transient($transient_key, $options, 6 * HOUR_IN_SECONDS);
+
+    return $options;
+}
+
+function apfu_delete_custom_plugin_list($index) {
+    $custom_lists = apfu_fetch_custom_plugin_lists();
+    if (isset($custom_lists[$index])) {
+        // Delete transient for the list
+        $transient_key = 'apfu_custom_list_' . $index;
+        delete_transient($transient_key);
+
+        // Remove the list from the database
+        unset($custom_lists[$index]);
+        update_option('apfu_custom_plugin_lists', array_values($custom_lists)); // Reindex the array
+    }
+}
+
 function apfu_render_add_plugin_from_url_page()
 {
     // Ensure only admins or users with install_plugins capability can access
@@ -72,6 +132,21 @@ function apfu_render_add_plugin_from_url_page()
         delete_transient('apfu_dropdown_options'); // Clear the transient
         apfu_fetch_plugin_dropdown_options(); // Fetch and cache the latest options
         echo '<div class="updated"><p>Plugin list resynced successfully.</p></div>';
+    }
+
+    // Handle adding a new list
+    if (!empty($_POST['apfu_new_list_title']) && !empty($_POST['apfu_new_list_csv_url'])) {
+        $title = sanitize_text_field($_POST['apfu_new_list_title']);
+        $csv_url = esc_url_raw($_POST['apfu_new_list_csv_url']);
+        apfu_save_custom_plugin_list($title, $csv_url);
+        echo '<div class="updated"><p>New plugin list added successfully.</p></div>';
+    }
+
+    // Handle deleting a list
+    if (isset($_POST['apfu_delete_list_index'])) { // Use isset to handle index 0
+        $index = intval($_POST['apfu_delete_list_index']);
+        apfu_delete_custom_plugin_list($index);
+        echo '<div class="updated"><p>Plugin list deleted successfully.</p></div>';
     }
 
     if (!empty($_POST['plugin_url'])) {
@@ -146,6 +221,7 @@ function apfu_render_add_plugin_from_url_page()
 
     // Fetch dropdown options
     $dropdown_options = apfu_fetch_plugin_dropdown_options();
+    $custom_lists = apfu_fetch_custom_plugin_lists();
 
     // Display the form
     ?>
@@ -185,7 +261,91 @@ function apfu_render_add_plugin_from_url_page()
         <?php } ?>
 
         <p>&nbsp;</p>
+    <hr>
 
+    <?php foreach ($custom_lists as $index => $list): ?>
+        <h2><?php echo esc_html($list['title']); ?></h2>
+        <?php $list_options = apfu_fetch_plugins_from_csv($list['csv_url'], $index); ?>
+        <?php if (empty($list_options)) { ?>
+            <p>No plugins found in this list. Please check the CSV URL.</p>
+        <?php } else { ?>
+            <form method="post" style="display: inline-block;">
+                <label for="plugin_select_<?php echo sanitize_title($list['title']); ?>">Select a Plugin:</label>
+                <select name="plugin_url" id="plugin_select_<?php echo sanitize_title($list['title']); ?>" class="regular-text">
+                    <option value="">Select a plugin...</option>
+                    <?php foreach ($list_options as $option): ?>
+                        <option value="<?php echo esc_url($option['url']); ?>">
+                            <?php echo esc_html($option['name']); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <input type="submit" class="button button-primary" value="Add Plugin">
+            </form>
+            <form method="post" style="display: inline-block;">
+                <input type="hidden" name="apfu_delete_list_index" value="<?php echo $index; ?>">
+                <button type="button" class="button button-secondary apfu-delete-list-button" data-list-title="<?php echo esc_attr($list['title']); ?>">Delete List</button>
+            </form>
+        <?php } ?>
+    <?php endforeach; ?>
+
+    <!-- Confirmation modal -->
+    <div id="apfu-delete-list-modal" style="display: none;">
+        <div style="background: #fff; padding: 20px; border: 1px solid #ccc; max-width: 400px; margin: 100px auto; text-align: center;">
+            <p id="apfu-delete-list-message"></p>
+            <form method="post" id="apfu-delete-list-form">
+                <input type="hidden" name="apfu_delete_list_index" id="apfu-delete-list-index">
+                <button type="submit" class="button button-primary">Confirm</button>
+                <button type="button" class="button button-secondary" id="apfu-cancel-delete">Cancel</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const deleteButtons = document.querySelectorAll('.apfu-delete-list-button');
+            const modal = document.getElementById('apfu-delete-list-modal');
+            const message = document.getElementById('apfu-delete-list-message');
+            const indexInput = document.getElementById('apfu-delete-list-index');
+            const cancelButton = document.getElementById('apfu-cancel-delete');
+            const deleteForm = document.getElementById('apfu-delete-list-form');
+
+            deleteButtons.forEach(button => {
+                button.addEventListener('click', function () {
+                    const listTitle = this.getAttribute('data-list-title');
+                    const listIndex = this.previousElementSibling.value;
+                    message.textContent = `Are you sure you want to delete the list "${listTitle}"?`;
+                    indexInput.value = listIndex;
+                    modal.style.display = 'block';
+                });
+            });
+
+            cancelButton.addEventListener('click', function () {
+                modal.style.display = 'none';
+            });
+
+            // Ensure the form submits properly
+            deleteForm.addEventListener('submit', function () {
+                modal.style.display = 'none';
+            });
+        });
+    </script>
+
+    <p>&nbsp;</p>
+    <hr>
+
+    <h2>Add New Plugin List</h2>
+    <form method="post">
+        <label for="apfu_new_list_title">List Title:</label>
+        <input type="text" name="apfu_new_list_title" id="apfu_new_list_title" class="regular-text" required>
+        <br><br>
+        <label for="apfu_new_list_csv_url">CSV URL:</label>
+        <input type="text" name="apfu_new_list_csv_url" id="apfu_new_list_csv_url" class="regular-text" required>
+        <br><br>
+        <input type="submit" class="button button-secondary" value="Add New List">
+    </form>
+
+    <p>&nbsp;</p>
+    <hr>
         <h2>Resync Plugin List</h2>
         <form method="post">
             <input type="hidden" name="apfu_resync_plugins" value="1">
