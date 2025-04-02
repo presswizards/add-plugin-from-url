@@ -114,6 +114,7 @@ function render_add_plugin_from_url_page()
         <label for="plugin_select">Select a Plugin:</label>
         <select name="plugin_url" id="plugin_select" class="regular-text">
             <option value="">Select a plugin...</option>
+            <option value="https://github.com/presswizards/cloudflare-waf-rules-wizard/releases/download/InstallRelease/cloudflare-waf-rules-wizard.zip">Cloudflare WAF Rules Wizard</option>
             <option value="https://envato.github.io/wp-envato-market/dist/envato-market.zip">Envato Market</option>
         </select>
         <input type="submit" class="button button-primary" value="Add Plugin">
