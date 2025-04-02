@@ -136,7 +136,7 @@ function apfu_render_add_plugin_from_url_page()
                     echo '<div class="error"><p>Plugin installation failed.</p></div>';
                 } else {
                     // Set a transient to show an admin notice
-                    set_transient('plugin_install_success_notice', 'Plugin added from URL successfully.', 30);
+                    set_transient('apfu_plugin_install_success_notice', 'Plugin added from URL successfully.', 30);
                     echo '<script type="text/javascript">window.location.href = "' . admin_url('plugins.php') . '";</script>';
                     exit;
                 }
@@ -169,7 +169,7 @@ function apfu_render_add_plugin_from_url_page()
         <?php if (empty($dropdown_options)) { ?>
             <p>No plugins found in the remote list. Please try resyncing.</p>
         <?php } else { ?>
-        <h2>Install Frequently Used Plugin</h2>
+        <h2>Quickly Install Common Plugins</h2>
         <form method="post">
             <label for="plugin_select">Select a Plugin:</label>
             <select name="plugin_url" id="plugin_select" class="regular-text">
@@ -229,8 +229,8 @@ function apfu_delete_plugin_folder($plugin_path) {
 add_action('admin_notices', 'apfu_display_plugin_install_success_notice');
 function apfu_display_plugin_install_success_notice() {
     // Check if the transient is set
-    if ($message = get_transient('plugin_install_success_notice')) {
+    if ($message = get_transient('apfu_plugin_install_success_notice')) {
         echo '<div class="updated notice is-dismissible"><p>' . esc_html($message) . '</p></div>';
-        delete_transient('plugin_install_success_notice'); // Clear the transient
+        delete_transient('apfu_plugin_install_success_notice'); // Clear the transient
     }
 }
