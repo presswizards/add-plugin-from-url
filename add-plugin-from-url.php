@@ -150,7 +150,13 @@ function apfu_render_add_plugin_from_url_page()
     // Display the form
     ?>
     <div class="wrap">
-        <h2>Add Plugin from URL</h2>
+    <h2>Add Plugin from URL - by Rob @ <a href=https://presswizards.com/ target=_blank>PressWizards.com</a></h2>
+    <p>A simple little plugin that allows you to easily install a plugin from a remote URL, avoiding the whole download and save, add plugin and upload, etc.</p>
+    <p>You can also use the built-in plugin list below to quickly install frequently used plugins.</p>
+    <p>&nbsp;</p>
+    <hr>
+
+    <h2>Add Plugin from URL</h2>
         <form method="post">
             <label for="plugin_url">Enter Plugin URL (.zip):</label>
             <input type="text" name="plugin_url" id="plugin_url" class="regular-text" required>
@@ -176,6 +182,13 @@ function apfu_render_add_plugin_from_url_page()
             <input type="hidden" name="apfu_resync_plugins" value="1">
             <input type="submit" class="button button-secondary" value="Resync Now">
         </form>
+        <p>&nbsp;</p>
+        <hr>
+        <p>If you find this plugin useful, please consider supporting my work:</p>
+        <p><a href="https://www.buymeacoffee.com/robwpdev" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a><br>
+            If this plugin saves you time, helps your clients, or helps you do better work, I’d appreciate it.</p>
+
+
     </div>
     <?php
 }
