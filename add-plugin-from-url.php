@@ -31,33 +31,44 @@ function apfu_fetch_plugin_dropdown_options() {
     }
 
     // Fetch the remote file
-    $response = wp_remote_get($remote_url, ['timeout' => 30]);
+    $plugins = apfu_fetch_plugins_from_csv($remote_url);
 
-    if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-        return []; // Return an empty array if the request fails
+    // Cache the data if valid plugins are found
+    if (!is_wp_error($plugins)) {
+        set_transient($transient_key, $plugins, 6 * HOUR_IN_SECONDS);
     }
 
-    $csv_data = wp_remote_retrieve_body($response);
-    $lines = explode("\n", $csv_data);
-    $options = [];
+    return $plugins;
+}
 
-    foreach ($lines as $line) {
-        $line = trim($line);
-        if (!empty($line)) {
-            list($name, $url) = array_map('trim', explode(',', $line, 2));
-            if (filter_var($url, FILTER_VALIDATE_URL)) {
-                $options[] = ['name' => $name, 'url' => $url];
+function apfu_fetch_all_custom_plugin_lists() {
+    $custom_lists = apfu_fetch_custom_plugin_lists();
+    $updated_lists = [];
+
+    foreach ($custom_lists as $index => $list) {
+        if (!empty($list['csv_url'])) {
+            $transient_key = 'apfu_custom_list_' . $index;
+
+            // Check if the transient exists
+            $cached_data = get_transient($transient_key);
+            if ($cached_data !== false) {
+                $list['plugins'] = $cached_data;
+            } else {
+                // Fetch fresh data and cache it
+                $plugins = apfu_fetch_plugins_from_csv($list['csv_url']);
+                if (!is_wp_error($plugins)) {
+                    set_transient($transient_key, $plugins, 6 * HOUR_IN_SECONDS);
+                    $list['plugins'] = $plugins;
+                } else {
+                    $list['plugins'] = []; // Clear plugins if fetch fails
+                }
             }
         }
+
+        $updated_lists[] = $list;
     }
 
-    // Cache the data in a transient for 6 hours
-    set_transient($transient_key, $options, 6 * HOUR_IN_SECONDS);
-
-    // Save the data in the plugin options table as a fallback
-    update_option('apfu_plugin_dropdown_options', $options);
-
-    return $options;
+    return $updated_lists;
 }
 
 function apfu_fetch_custom_plugin_lists() {
@@ -233,7 +244,7 @@ function apfu_clean_empty_lists() {
     $cleaned_lists = [];
 
     foreach ($custom_lists as $list) {
-        if (!empty($list['plugins']) || (!empty($list['csv_url']) && !is_wp_error(apfu_fetch_cached_plugins_from_csv($list['csv_url'])))) {
+        if (!empty($list['plugins']) || (!empty($list['csv_url']) && !is_wp_error(apfu_fetch_plugins_from_csv($list['csv_url'])))) {
             $cleaned_lists[] = $list; // Keep valid lists
         }
     }
@@ -253,9 +264,19 @@ function apfu_render_add_plugin_from_url_page()
 
     // Handle resync action
     if (!empty($_POST['apfu_resync_plugins'])) {
-        delete_transient('apfu_dropdown_options'); // Clear the transient
-        apfu_fetch_plugin_dropdown_options(); // Fetch and cache the latest options
-        echo '<div class="updated"><p>Plugin list resynced successfully.</p></div>';
+        delete_transient('apfu_dropdown_options'); // Clear the transient for built-in plugins
+        apfu_fetch_plugin_dropdown_options(); // Fetch and cache the latest built-in plugins
+
+        // Clear transients for custom plugin lists
+        $custom_lists = apfu_fetch_custom_plugin_lists();
+        foreach ($custom_lists as $index => $list) {
+            if (!empty($list['csv_url'])) {
+                delete_transient('apfu_custom_list_' . $index);
+            }
+        }
+        apfu_fetch_all_custom_plugin_lists(); // Fetch and cache the latest custom plugin lists
+
+        echo '<div class="updated"><p>Plugin lists resynced successfully.</p></div>';
     }
 
     // Handle adding a new list
@@ -353,7 +374,9 @@ function apfu_render_add_plugin_from_url_page()
 
     // Fetch dropdown options
     $dropdown_options = apfu_fetch_plugin_dropdown_options();
-    $custom_lists = apfu_fetch_custom_plugin_lists();
+
+    // Fetch all custom plugin lists
+    $custom_lists = apfu_fetch_all_custom_plugin_lists();
 
     // Display the form
     ?>
@@ -361,6 +384,10 @@ function apfu_render_add_plugin_from_url_page()
     <h2>Add Plugin from URL - by Rob @ <a href=https://presswizards.com/ target=_blank>PressWizards.com</a></h2>
     <p>A simple little plugin that allows you to easily install a plugin from a remote URL, avoiding the whole download and save, add plugin and upload, etc.</p>
     <p>You can also use the built-in plugin list below to quickly install frequently used plugins.</p>
+
+    <p>If you find this plugin useful, please consider supporting my work:</p>
+        <p><a href="https://www.buymeacoffee.com/robwpdev" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a><br>
+            If this plugin saves you time, helps your clients, or helps you do better work, I’d appreciate it.</p>
 
     <p>&nbsp;</p>
     <hr>
@@ -379,7 +406,7 @@ function apfu_render_add_plugin_from_url_page()
         <?php } else { ?>
         <h2>Quicky Install Built-In Plugins</h2>
         <form method="post">
-            <label for="plugin_select">Select a Plugin:</label>
+            <label for="plugin_select">Select: </label>
             <select name="plugin_url" id="plugin_select" class="regular-text">
                 <option value="">Select a plugin...</option>
                 <?php foreach ($dropdown_options as $option): ?>
@@ -392,16 +419,16 @@ function apfu_render_add_plugin_from_url_page()
         </form>
         <?php } ?>
 
-        <p>&nbsp;</p>
-
+    <?php if (!empty($custom_lists)) { ?>
+        <p></p>
+        <hr>
+        <h2>Custom Plugin Lists</h2>
+    <?php } ?>
     <?php foreach ($custom_lists as $index => $list): ?>
-        <h2><?php echo esc_html($list['title']); ?></h2>
-        <?php if (!empty($list['csv_url'])): ?>
-            <p><em>CSV URL: <a href="<?php echo esc_url($list['csv_url']); ?>" target="_blank"><?php echo esc_html($list['csv_url']); ?></a></em></p>
-        <?php endif; ?>
+        <h2><?php echo esc_html($list['title']); ?> List</h2>
         <?php if (!empty($list['plugins'])): ?>
             <form method="post" style="display: inline-block;">
-                <label for="plugin_select_<?php echo sanitize_title($list['title']); ?>">Select a Plugin:</label>
+                <label for="plugin_select_<?php echo sanitize_title($list['title']); ?>">Select: </label>
                 <select name="plugin_url" id="plugin_select_<?php echo sanitize_title($list['title']); ?>" class="regular-text">
                     <option value="">Select a plugin...</option>
                     <?php foreach ($list['plugins'] as $plugin): ?>
@@ -423,6 +450,11 @@ function apfu_render_add_plugin_from_url_page()
             <input type="hidden" name="apfu_delete_list_index" value="<?php echo $index; ?>">
             <button type="button" class="button button-secondary apfu-delete-list-button" data-list-title="<?php echo esc_attr($list['title']); ?>" style="margin-top: -5px;padding-bottom:1px;">Delete List</button>
         </form>
+        <?php if (!empty($list['csv_url'])) { ?>
+            <p><em>Dynamic List from remote CSV file: <?php echo esc_html($list['csv_url']); ?></em></p>
+        <?php } else { ?>
+            <p><em>Static List</em></p>
+        <?php } ?>
     <?php endforeach; ?>
 
     <!-- Confirmation modal -->
@@ -497,7 +529,6 @@ function apfu_render_add_plugin_from_url_page()
         <p>If you find this plugin useful, please consider supporting my work:</p>
         <p><a href="https://www.buymeacoffee.com/robwpdev" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a><br>
             If this plugin saves you time, helps your clients, or helps you do better work, I’d appreciate it.</p>
-
 
     </div>
     <?php
