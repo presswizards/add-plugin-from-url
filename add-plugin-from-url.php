@@ -365,7 +365,7 @@ function apfu_render_add_plugin_from_url_page()
                 } else {
                     // Set a transient to show an admin notice
                     set_transient('apfu_plugin_install_success_notice', 'Plugin added from URL successfully.', 30);
-                    echo '<script type="text/javascript">window.location.href = "' . admin_url('plugins.php') . '";</script>';
+                    echo '<script type="text/javascript">window.location.href = "' . admin_url('plugins.php?page=add-plugin-from-url') . '";</script>';
                     exit;
                 }
             }
